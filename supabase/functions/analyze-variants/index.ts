@@ -28,67 +28,103 @@ interface HeuristicScores {
   usabilityRisks: string[];
 }
 
-// Heuristic scoring rules
-function applyHeuristics(features: VisionFeatures): HeuristicScores {
+// Heuristic scoring rules - now using continuous scaling for differentiation
+function applyHeuristics(features: VisionFeatures, variantLabel: string): HeuristicScores {
   let ctr = 50;
   let conversion = 50;
-  let dropoff = 20;
-  let timeToAct = 20;
-  let taskCompletion = 75;
+  let dropoff = 15;
+  let timeToAct = 15;
+  let taskCompletion = 80;
   const risks: string[] = [];
 
-  // Flow steps rule
-  if (features.flowSteps > 3) {
-    dropoff += 12;
-    risks.push(`High flow complexity (${features.flowSteps} steps) may increase drop-off`);
+  console.log(`[${variantLabel}] Applying heuristics to features:`, JSON.stringify(features, null, 2));
+
+  // Flow steps rule - continuous scaling
+  if (features.flowSteps > 0) {
+    const flowPenalty = Math.min(features.flowSteps * 4, 25);
+    dropoff += flowPenalty;
+    timeToAct += features.flowSteps * 3;
+    if (features.flowSteps > 3) {
+      risks.push(`High flow complexity (${features.flowSteps} steps) may increase drop-off`);
+    }
   }
 
-  // Clutter score rule
-  if (features.clutterScore > 0.6) {
-    taskCompletion -= 10;
-    risks.push(`Visual clutter (score: ${(features.clutterScore * 100).toFixed(0)}%) may hinder task completion`);
+  // Clutter score rule - continuous scaling
+  if (features.clutterScore > 0) {
+    const clutterPenalty = features.clutterScore * 20;
+    taskCompletion -= clutterPenalty;
+    conversion -= clutterPenalty * 0.5;
+    if (features.clutterScore > 0.5) {
+      risks.push(`Visual clutter (score: ${(features.clutterScore * 100).toFixed(0)}%) may hinder task completion`);
+    }
   }
 
-  // Readability rule
-  if (features.readabilityScore < 0.5) {
-    conversion -= 7;
-    risks.push(`Low readability (score: ${(features.readabilityScore * 100).toFixed(0)}%) may reduce clarity`);
+  // Readability rule - continuous bonus/penalty
+  if (features.readabilityScore > 0) {
+    const readabilityBonus = (features.readabilityScore - 0.5) * 20;
+    conversion += readabilityBonus;
+    if (features.readabilityScore < 0.5) {
+      risks.push(`Low readability (score: ${(features.readabilityScore * 100).toFixed(0)}%) may reduce clarity`);
+    }
   }
 
-  // Multiple CTAs rule
-  if (features.ctaCount > 1) {
-    ctr -= 5;
+  // CTA count rule - continuous scaling
+  if (features.ctaCount === 1) {
+    ctr += 5; // Single focused CTA is best
+  } else if (features.ctaCount > 1) {
+    const ctaPenalty = (features.ctaCount - 1) * 3;
+    ctr -= ctaPenalty;
     risks.push(`Multiple CTAs (${features.ctaCount}) may dilute focus`);
   }
 
   // Primary CTA above fold rule
   if (features.primaryCTAAboveFold) {
-    ctr += 8;
+    ctr += 10;
+    conversion += 5;
   } else {
+    ctr -= 5;
     risks.push('Primary CTA is not prominently positioned above the fold');
   }
 
   // Strong visual hierarchy rule
   if (features.visualHierarchyStrong) {
-    conversion += 10;
+    conversion += 8;
+    taskCompletion += 5;
   } else {
+    conversion -= 5;
     risks.push('Visual hierarchy could be strengthened for better comprehension');
   }
 
-  // Text blocks rule
-  if (features.textBlocks > 6) {
-    conversion -= 5;
-    risks.push(`High text density (${features.textBlocks} blocks) may reduce engagement`);
+  // Text blocks rule - continuous scaling
+  if (features.textBlocks > 0) {
+    if (features.textBlocks <= 4) {
+      conversion += 3; // Concise is good
+    } else {
+      const textPenalty = (features.textBlocks - 4) * 2;
+      conversion -= textPenalty;
+      if (features.textBlocks > 6) {
+        risks.push(`High text density (${features.textBlocks} blocks) may reduce engagement`);
+      }
+    }
   }
 
-  return {
-    predictedCTR: Math.max(0, Math.min(100, ctr)),
-    predictedConversion: Math.max(0, Math.min(100, conversion)),
-    predictedDropoff: Math.max(0, Math.min(100, dropoff)),
-    predictedTimeToAct: Math.max(5, Math.min(60, timeToAct)),
-    predictedTaskCompletion: Math.max(0, Math.min(100, taskCompletion)),
+  // Tap targets rule - affects time to act
+  if (features.tapTargets > 10) {
+    timeToAct += (features.tapTargets - 10) * 0.5;
+  }
+
+  const result = {
+    predictedCTR: Math.round(Math.max(0, Math.min(100, ctr))),
+    predictedConversion: Math.round(Math.max(0, Math.min(100, conversion))),
+    predictedDropoff: Math.round(Math.max(0, Math.min(100, dropoff))),
+    predictedTimeToAct: Math.round(Math.max(5, Math.min(60, timeToAct))),
+    predictedTaskCompletion: Math.round(Math.max(0, Math.min(100, taskCompletion))),
     usabilityRisks: risks,
   };
+
+  console.log(`[${variantLabel}] Heuristic scores:`, JSON.stringify(result, null, 2));
+
+  return result;
 }
 
 serve(async (req) => {
@@ -104,9 +140,18 @@ serve(async (req) => {
       throw new Error('LOVABLE_API_KEY is not configured');
     }
 
-    console.log('Starting vision analysis for both variants...');
+    // Log image inputs for debugging
+    console.log('=== VARIANT A IMAGE ===');
+    console.log('Image A type:', imageA?.substring(0, 50) + '...');
+    console.log('Image A length:', imageA?.length);
+    
+    console.log('=== VARIANT B IMAGE ===');
+    console.log('Image B type:', imageB?.substring(0, 50) + '...');
+    console.log('Image B length:', imageB?.length);
 
-    // Step 1: Vision Analysis for both variants using Gemini Flash
+    console.log('Starting vision analysis for both variants INDEPENDENTLY...');
+
+    // Step 1: Vision Analysis for each variant SEPARATELY using Gemini Flash
     const visionPrompt = `Analyze this UI design screenshot and extract the following information in JSON format:
 {
   "components": ["list of UI components like buttons, inputs, nav bars, cards, etc."],
@@ -122,19 +167,32 @@ serve(async (req) => {
   "visualHierarchyStrong": <true/false if there's clear visual hierarchy>
 }
 
-Be precise and analytical. Focus on UX patterns and usability aspects.`;
+Be precise and analytical. Focus on UX patterns and usability aspects. Return ONLY valid JSON.`;
 
-    // Analyze both variants in parallel
+    // Analyze variants INDEPENDENTLY in parallel (separate API calls)
+    console.log('Calling vision API for Variant A...');
+    console.log('Calling vision API for Variant B...');
+    
     const [featuresA, featuresB] = await Promise.all([
-      analyzeImage(imageA, visionPrompt, LOVABLE_API_KEY),
-      analyzeImage(imageB, visionPrompt, LOVABLE_API_KEY),
+      analyzeImage(imageA, visionPrompt, LOVABLE_API_KEY, 'A'),
+      analyzeImage(imageB, visionPrompt, LOVABLE_API_KEY, 'B'),
     ]);
+
+    console.log('=== VARIANT A EXTRACTED FEATURES ===');
+    console.log(JSON.stringify(featuresA, null, 2));
+    
+    console.log('=== VARIANT B EXTRACTED FEATURES ===');
+    console.log(JSON.stringify(featuresB, null, 2));
 
     console.log('Vision analysis complete. Applying heuristics...');
 
-    // Step 2: Apply heuristic scoring
-    const scoresA = applyHeuristics(featuresA);
-    const scoresB = applyHeuristics(featuresB);
+    // Step 2: Apply heuristic scoring SEPARATELY
+    const scoresA = applyHeuristics(featuresA, 'A');
+    const scoresB = applyHeuristics(featuresB, 'B');
+
+    console.log('=== FINAL SCORES COMPARISON ===');
+    console.log('Scores A:', JSON.stringify(scoresA, null, 2));
+    console.log('Scores B:', JSON.stringify(scoresB, null, 2));
 
     console.log('Heuristics applied. Starting reasoning analysis...');
 
@@ -171,22 +229,24 @@ ${JSON.stringify(featuresB, null, 2)}
 - Assumptions: ${context?.assumptions || 'None provided'}
 - Pain Points: ${context?.painPoints || 'None provided'}
 
+Based on the ACTUAL HEURISTIC SCORES above (which are different for each variant), provide your analysis. Use the heuristic scores as a baseline and adjust based on your UX expertise and the context provided.
+
 Provide your analysis in this JSON format:
 {
   "summaryA": "Brief description of Variant A's design approach and strengths (2-3 sentences)",
   "summaryB": "Brief description of Variant B's design approach and strengths (2-3 sentences)",
   "differences": ["List of 4-6 key differences between the variants"],
   "projectedMetrics": {
-    "ctrA": "<percentage>",
-    "ctrB": "<percentage>",
-    "conversionA": "<percentage>",
-    "conversionB": "<percentage>",
-    "dropoffA": "<percentage>",
-    "dropoffB": "<percentage>",
-    "completionA": "<percentage>",
-    "completionB": "<percentage>",
-    "timeToActA": "<seconds>",
-    "timeToActB": "<seconds>",
+    "ctrA": "${scoresA.predictedCTR}%",
+    "ctrB": "${scoresB.predictedCTR}%",
+    "conversionA": "${scoresA.predictedConversion}%",
+    "conversionB": "${scoresB.predictedConversion}%",
+    "dropoffA": "${scoresA.predictedDropoff}%",
+    "dropoffB": "${scoresB.predictedDropoff}%",
+    "completionA": "${scoresA.predictedTaskCompletion}%",
+    "completionB": "${scoresB.predictedTaskCompletion}%",
+    "timeToActA": "${scoresA.predictedTimeToAct}s",
+    "timeToActB": "${scoresB.predictedTimeToAct}s",
     "confidence": "High/Medium/Low"
   },
   "rationale": "Detailed explanation of why one variant performs better (3-4 paragraphs with clear reasoning)",
@@ -218,7 +278,8 @@ Provide your analysis in this JSON format:
     const reasoningData = await reasoningResponse.json();
     const reasoningContent = reasoningData.choices?.[0]?.message?.content;
     
-    console.log('Reasoning response received:', reasoningContent?.substring(0, 200));
+    console.log('=== RAW REASONING RESPONSE ===');
+    console.log(reasoningContent);
 
     // Parse the reasoning response
     let analysis;
@@ -245,6 +306,7 @@ Provide your analysis in this JSON format:
       disclaimer: "This projection combines visual analysis + heuristics + LLM reasoning. Metrics are directional, not absolute.",
     };
 
+    console.log('=== FINAL RESULT ===');
     console.log('Analysis complete successfully');
 
     return new Response(JSON.stringify(result), {
@@ -263,15 +325,16 @@ Provide your analysis in this JSON format:
   }
 });
 
-async function analyzeImage(imageData: string, prompt: string, apiKey: string): Promise<VisionFeatures> {
-  const isUrl = imageData.startsWith('http');
+async function analyzeImage(imageData: string, prompt: string, apiKey: string, variantLabel: string): Promise<VisionFeatures> {
+  console.log(`[${variantLabel}] Starting vision analysis...`);
+  console.log(`[${variantLabel}] Image data starts with:`, imageData?.substring(0, 100));
   
   const content = [
     { type: 'text', text: prompt },
     {
       type: 'image_url',
       image_url: {
-        url: isUrl ? imageData : imageData
+        url: imageData
       }
     }
   ];
@@ -292,26 +355,29 @@ async function analyzeImage(imageData: string, prompt: string, apiKey: string): 
 
   if (!response.ok) {
     const errorText = await response.text();
-    console.error('Vision API error:', response.status, errorText);
-    throw new Error(`Vision analysis failed: ${response.status}`);
+    console.error(`[${variantLabel}] Vision API error:`, response.status, errorText);
+    throw new Error(`Vision analysis failed for ${variantLabel}: ${response.status}`);
   }
 
   const data = await response.json();
   const textContent = data.choices?.[0]?.message?.content;
   
-  console.log('Vision response:', textContent?.substring(0, 300));
+  console.log(`[${variantLabel}] Raw vision response:`, textContent);
 
   // Parse JSON from response
   try {
     const jsonMatch = textContent.match(/\{[\s\S]*\}/);
     if (jsonMatch) {
-      return JSON.parse(jsonMatch[0]);
+      const parsed = JSON.parse(jsonMatch[0]);
+      console.log(`[${variantLabel}] Parsed features:`, JSON.stringify(parsed, null, 2));
+      return parsed;
     }
   } catch (e) {
-    console.error('Failed to parse vision response:', e);
+    console.error(`[${variantLabel}] Failed to parse vision response:`, e);
   }
 
-  // Return default features if parsing fails
+  // Return default features if parsing fails - but log it clearly
+  console.warn(`[${variantLabel}] Using fallback features due to parsing failure`);
   return {
     components: ['Unable to extract'],
     hierarchy: ['Unable to analyze'],
@@ -328,7 +394,19 @@ async function analyzeImage(imageData: string, prompt: string, apiKey: string): 
 }
 
 function generateFallbackAnalysis(featuresA: VisionFeatures, featuresB: VisionFeatures, scoresA: HeuristicScores, scoresB: HeuristicScores, context: any) {
-  const winner = scoresB.predictedConversion > scoresA.predictedConversion ? 'B' : 'A';
+  // Determine winner based on primary metric or overall conversion
+  const primaryMetric = context?.primaryMetric?.toLowerCase() || 'conversion';
+  let winner: 'A' | 'B';
+  
+  if (primaryMetric.includes('ctr') || primaryMetric.includes('click')) {
+    winner = scoresA.predictedCTR > scoresB.predictedCTR ? 'A' : 'B';
+  } else if (primaryMetric.includes('drop')) {
+    winner = scoresA.predictedDropoff < scoresB.predictedDropoff ? 'A' : 'B';
+  } else if (primaryMetric.includes('completion') || primaryMetric.includes('task')) {
+    winner = scoresA.predictedTaskCompletion > scoresB.predictedTaskCompletion ? 'A' : 'B';
+  } else {
+    winner = scoresA.predictedConversion > scoresB.predictedConversion ? 'A' : 'B';
+  }
   
   return {
     summaryA: `Variant A features ${featuresA.components.slice(0, 3).join(', ')} with ${featuresA.ctaCount} CTAs and a clutter score of ${(featuresA.clutterScore * 100).toFixed(0)}%.`,
@@ -338,22 +416,23 @@ function generateFallbackAnalysis(featuresA: VisionFeatures, featuresB: VisionFe
       `Flow steps: A has ${featuresA.flowSteps}, B has ${featuresB.flowSteps}`,
       `Clutter: A scores ${(featuresA.clutterScore * 100).toFixed(0)}%, B scores ${(featuresB.clutterScore * 100).toFixed(0)}%`,
       `Readability: A scores ${(featuresA.readabilityScore * 100).toFixed(0)}%, B scores ${(featuresB.readabilityScore * 100).toFixed(0)}%`,
+      `Text density: A has ${featuresA.textBlocks} blocks, B has ${featuresB.textBlocks} blocks`,
     ],
     projectedMetrics: {
-      ctrA: `${scoresA.predictedCTR.toFixed(1)}%`,
-      ctrB: `${scoresB.predictedCTR.toFixed(1)}%`,
-      conversionA: `${scoresA.predictedConversion.toFixed(1)}%`,
-      conversionB: `${scoresB.predictedConversion.toFixed(1)}%`,
-      dropoffA: `${scoresA.predictedDropoff.toFixed(1)}%`,
-      dropoffB: `${scoresB.predictedDropoff.toFixed(1)}%`,
-      completionA: `${scoresA.predictedTaskCompletion.toFixed(1)}%`,
-      completionB: `${scoresB.predictedTaskCompletion.toFixed(1)}%`,
+      ctrA: `${scoresA.predictedCTR}%`,
+      ctrB: `${scoresB.predictedCTR}%`,
+      conversionA: `${scoresA.predictedConversion}%`,
+      conversionB: `${scoresB.predictedConversion}%`,
+      dropoffA: `${scoresA.predictedDropoff}%`,
+      dropoffB: `${scoresB.predictedDropoff}%`,
+      completionA: `${scoresA.predictedTaskCompletion}%`,
+      completionB: `${scoresB.predictedTaskCompletion}%`,
       timeToActA: `${scoresA.predictedTimeToAct}s`,
       timeToActB: `${scoresB.predictedTimeToAct}s`,
       confidence: 'Medium',
     },
-    rationale: `Based on heuristic analysis, Variant ${winner} shows stronger projected performance. The analysis considers flow complexity, visual clutter, readability, and CTA placement.`,
+    rationale: `Based on heuristic analysis, Variant ${winner} shows stronger projected performance for ${context?.primaryMetric || 'conversion rate'}. The analysis considers flow complexity, visual clutter, readability, and CTA placement.`,
     risks: [...scoresA.usabilityRisks.slice(0, 2), ...scoresB.usabilityRisks.slice(0, 2)],
-    recommendation: `${winner} wins - based on heuristic scoring`,
+    recommendation: `${winner} wins - based on heuristic scoring for ${context?.primaryMetric || 'conversion'}`,
   };
 }
