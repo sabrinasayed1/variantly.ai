@@ -15,7 +15,7 @@ const Index = () => {
       <section className="relative overflow-hidden bg-gradient-subtle border-b">
         <div className="container mx-auto px-4 py-20 lg:py-32">
           <div className="max-w-4xl mx-auto text-center">
-            <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-primary/10 text-primary text-sm font-medium mb-6">AI-Powered Prototype Analysis<Zap className="w-4 h-4" />
+            <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-primary/10 text-primary text-sm font-medium mb-6">AI-Powered Prototype Analysis <Zap className="w-4 h-4" />
               AI-Powered Design Analysis
             </div>
             <h1 className="text-5xl lg:text-7xl font-bold mb-6 tracking-tight">
