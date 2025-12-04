@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { Download, Copy, TrendingUp, TrendingDown, Minus, Sparkles, AlertTriangle } from 'lucide-react';
+import { Download, Copy, TrendingUp, TrendingDown, Minus, Sparkles, AlertTriangle, Brain } from 'lucide-react';
 import { Comparison, VariantData } from '@/types/comparison';
 import { getComparison } from '@/lib/storage';
 import { useToast } from '@/hooks/use-toast';
@@ -59,7 +59,8 @@ ${comparison.impact?.metricsTable.map(m =>
 ${comparison.impact?.rationale}
 
 ---
-These projections are directional, not statistical.
+This projection combines visual analysis + heuristics + LLM reasoning.
+Metrics are directional, not absolute.
 `;
 
     navigator.clipboard.writeText(exportText);
@@ -99,6 +100,14 @@ These projections are directional, not statistical.
         </div>
         <h2 className="text-2xl font-bold mb-2">AI Analysis Complete</h2>
         <p className="text-muted-foreground">Here's what we discovered about your variants</p>
+      </div>
+
+      {/* Analysis Method Badge */}
+      <div className="flex justify-center">
+        <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-primary/10 text-sm">
+          <Brain className="w-4 h-4 text-primary" />
+          <span className="text-primary font-medium">Vision Analysis + Heuristics + LLM Reasoning</span>
+        </div>
       </div>
 
       {/* Variant Summaries */}
@@ -196,8 +205,9 @@ These projections are directional, not statistical.
           <div>
             <h4 className="font-semibold text-sm mb-1">Important Note</h4>
             <p className="text-sm text-muted-foreground">
-              These projections are <strong>directional insights</strong> based on UX heuristics and design patterns, 
-              not statistical predictions. Consider validating with qualitative user testing or A/B tests for high-stakes decisions.
+              This projection combines <strong>visual analysis + heuristics + LLM reasoning</strong>. 
+              Metrics are <strong>directional, not absolute</strong>. Consider validating with qualitative user testing 
+              or A/B tests for high-stakes decisions.
             </p>
           </div>
         </div>

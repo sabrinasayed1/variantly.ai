@@ -1,10 +1,11 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ArrowLeft, ArrowRight, Check } from 'lucide-react';
+import { ArrowLeft, ArrowRight, Check, Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { VariantData, ComparisonContext, Comparison } from '@/types/comparison';
-import { generateAISummary, generateImpactPredictions } from '@/lib/mockAI';
+import { analyzeVariants, convertToAISummary, convertToImpactData } from '@/lib/aiAnalysis';
 import { saveComparison } from '@/lib/storage';
+import { useToast } from '@/hooks/use-toast';
 import UploadStep from './wizard/UploadStep';
 import ContextStep from './wizard/ContextStep';
 import ResultsStep from './wizard/ResultsStep';
@@ -17,8 +18,10 @@ const steps = [
 
 export default function ComparisonWizard() {
   const navigate = useNavigate();
+  const { toast } = useToast();
   const [currentStep, setCurrentStep] = useState(1);
   const [comparisonId] = useState(() => `comp-${Date.now()}`);
+  const [isAnalyzing, setIsAnalyzing] = useState(false);
   
   const [variantA, setVariantA] = useState<VariantData>({ id: 'A' });
   const [variantB, setVariantB] = useState<VariantData>({ id: 'B' });
@@ -34,25 +37,55 @@ export default function ComparisonWizard() {
   const canProceedFromUpload = variantA.imageUrl && variantB.imageUrl;
   const canProceedFromContext = context.primaryMetric && context.productStage;
 
-  const handleNext = () => {
+  const handleNext = async () => {
     if (currentStep === 2) {
-      // Generate AI results before moving to results step
-      const aiSummary = generateAISummary(context);
-      const impact = generateImpactPredictions(context);
-      
-      const comparison: Comparison = {
-        id: comparisonId,
-        variantA,
-        variantB,
-        context,
-        aiSummary,
-        impact,
-        createdAt: new Date().toISOString(),
-      };
-      
-      saveComparison(comparison);
+      // Generate real AI analysis
+      setIsAnalyzing(true);
+      try {
+        toast({
+          title: 'Analyzing variants...',
+          description: 'This may take 15-30 seconds as we analyze your designs with AI.',
+        });
+
+        const result = await analyzeVariants(
+          variantA.imageUrl!,
+          variantB.imageUrl!,
+          context
+        );
+
+        const aiSummary = convertToAISummary(result.analysis);
+        const impact = convertToImpactData(result.analysis);
+        
+        const comparison: Comparison = {
+          id: comparisonId,
+          variantA,
+          variantB,
+          context,
+          aiSummary,
+          impact,
+          createdAt: new Date().toISOString(),
+        };
+        
+        saveComparison(comparison);
+        setCurrentStep(3);
+
+        toast({
+          title: 'Analysis complete!',
+          description: 'Your AI-powered comparison is ready.',
+        });
+      } catch (error) {
+        console.error('Analysis error:', error);
+        toast({
+          title: 'Analysis failed',
+          description: error instanceof Error ? error.message : 'Please try again.',
+          variant: 'destructive',
+        });
+      } finally {
+        setIsAnalyzing(false);
+      }
+    } else {
+      setCurrentStep(prev => Math.min(prev + 1, steps.length));
     }
-    setCurrentStep(prev => Math.min(prev + 1, steps.length));
   };
 
   const handleBack = () => {
@@ -143,6 +176,7 @@ export default function ComparisonWizard() {
             variant="outline" 
             onClick={handleBack}
             className="gap-2"
+            disabled={isAnalyzing}
           >
             <ArrowLeft className="w-4 h-4" />
             {currentStep === 1 ? 'Cancel' : 'Back'}
@@ -152,13 +186,23 @@ export default function ComparisonWizard() {
             <Button 
               onClick={handleNext}
               disabled={
+                isAnalyzing ||
                 (currentStep === 1 && !canProceedFromUpload) ||
                 (currentStep === 2 && !canProceedFromContext)
               }
               className="gap-2"
             >
-              {currentStep === 2 ? 'Generate Analysis' : 'Next'}
-              <ArrowRight className="w-4 h-4" />
+              {isAnalyzing ? (
+                <>
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                  Analyzing...
+                </>
+              ) : (
+                <>
+                  {currentStep === 2 ? 'Generate Analysis' : 'Next'}
+                  <ArrowRight className="w-4 h-4" />
+                </>
+              )}
             </Button>
           ) : (
             <Button onClick={handleFinish} className="gap-2">
